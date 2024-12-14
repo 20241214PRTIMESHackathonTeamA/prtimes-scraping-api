@@ -22,9 +22,10 @@ GET /prtimes_posts
 ```
 [
     {
-        "id": "xxxxxxxx-xxxxxxxxxx",
         "corporationName": "株式会社YYYYYY",
         "publishdDatetime": "2024年12月14日",
+        "thumbnailUrl": "https://example.com/xxxx"
+        "postUrl": "/main/html/rd/p/xxxxxxx.xxxxxxxxxx",
         "title": "ZZZZZの製品をリリースしました",
         "like_count": "100",
     }
