@@ -4,6 +4,13 @@
 
 ### Getting Started
 
+required to go version 1.23.4 or higher
+
+```
+go mod tidy
+go run main.go
+```
+
 ### API Reference
 
 #### Get PRTIMES Posts
