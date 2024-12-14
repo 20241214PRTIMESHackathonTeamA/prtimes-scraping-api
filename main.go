@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -58,6 +59,17 @@ func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limitStr := r.URL.Query().Get("limit")
+	limit := 0
+	if limitStr != "" {
+		var err error
+		limit, err = strconv.Atoi(limitStr)
+		if err != nil || limit <= 0 {
+			http.Error(w, "limit query parameter must be a positive integer", http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Fetch the first page to determine the total number of pages
 	firstPageData, err := fetchPRTimesData(keyword, 1)
 	if err != nil {
@@ -71,8 +83,13 @@ func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	fetchedCount := 0
 	// Fetch all pages concurrently
 	for page := 1; page <= totalPages; page++ {
+		if limit > 0 && fetchedCount >= limit {
+			break
+		}
+
 		wg.Add(1)
 		go func(page int) {
 			defer wg.Done()
@@ -84,13 +101,19 @@ func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
 
 			mu.Lock()
 			for _, release := range prTimesData.Data.ReleaseList {
+				if limit > 0 && fetchedCount >= limit {
+					mu.Unlock()
+					return
+				}
+
 				results = append(results, ResponseItem{
 					CorporationName: release.CompanyName,
 					PublishedDate:   parseReleaseDate(release.ReleasedAt),
 					ThumbnailURL:    release.ThumbnailURL,
-					PostURL:         "https://prtimes.jp" + release.ReleaseURL,
+					PostURL:         release.ReleaseURL,
 					Title:           release.Title,
 				})
+				fetchedCount++
 			}
 			mu.Unlock()
 		}(page)
