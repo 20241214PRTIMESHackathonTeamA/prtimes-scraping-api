@@ -4,7 +4,7 @@
 
 ### Getting Started
 
-required to go version 1.23.4 or higher
+required to go version 1.23.3 or higher
 
 ```
 go mod tidy
