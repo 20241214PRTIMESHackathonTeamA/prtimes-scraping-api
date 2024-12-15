@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -112,17 +113,12 @@ func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totalPages := firstPageData.Data.LastPage
-	results := []ResponseItem{}
+	var results []ResponseItem
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	fetchedCount := 0
 	// Fetch all pages concurrently
 	for page := 1; page <= totalPages; page++ {
-		if limit > 0 && fetchedCount >= limit {
-			break
-		}
-
 		wg.Add(1)
 		go func(page int) {
 			defer wg.Done()
@@ -132,13 +128,7 @@ func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			mu.Lock()
 			for _, release := range prTimesData.Data.ReleaseList {
-				if limit > 0 && fetchedCount >= limit {
-					mu.Unlock()
-					return
-				}
-
 				releaseID := extractReleaseID(release.ReleaseURL)
 				likeCount, err := fetchLikeCount(releaseID)
 				if err != nil {
@@ -146,21 +136,33 @@ func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
 					likeCount = 0
 				}
 
-				results = append(results, ResponseItem{
+				item := ResponseItem{
 					CorporationName: release.CompanyName,
 					PublishedDate:   parseReleaseDate(release.ReleasedAt),
 					ThumbnailURL:    release.ThumbnailURL,
 					PostURL:         "https://prtimes.jp" + release.ReleaseURL,
 					Title:           release.Title,
 					LikeCount:       likeCount,
-				})
-				fetchedCount++
+				}
+
+				mu.Lock()
+				results = append(results, item)
+				mu.Unlock()
 			}
-			mu.Unlock()
 		}(page)
 	}
 
 	wg.Wait()
+
+	// LikeCountで降順ソート
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].LikeCount > results[j].LikeCount
+	})
+
+	// Limitに応じてデータをカット
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
 
 	// Write the JSON response
 	w.Header().Set("Content-Type", "application/json")
