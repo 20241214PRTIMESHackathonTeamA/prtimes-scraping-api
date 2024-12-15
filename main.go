@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -27,12 +28,19 @@ type PRTimesResponse struct {
 	Message string `json:"message"`
 }
 
+type LikeCountResponse struct {
+	Data struct {
+		LikeCount int `json:"like_count"`
+	} `json:"data"`
+}
+
 type ResponseItem struct {
 	CorporationName string `json:"corporationName"`
 	PublishedDate   string `json:"publishdDatetime"`
 	ThumbnailURL    string `json:"thumbnailUrl"`
 	PostURL         string `json:"postUrl"`
 	Title           string `json:"title"`
+	LikeCount       int    `json:"likeCount"`
 }
 
 func fetchPRTimesData(keyword string, page int) (*PRTimesResponse, error) {
@@ -50,6 +58,31 @@ func fetchPRTimesData(keyword string, page int) (*PRTimesResponse, error) {
 	}
 
 	return &prTimesResp, nil
+}
+
+func fetchLikeCount(releaseID string) (int, error) {
+	url := fmt.Sprintf("https://prtimes.jp/api/press_release.php/press_release/%s/like_count", releaseID)
+	resp, err := http.Get(url)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var likeResp LikeCountResponse
+	if err := json.NewDecoder(resp.Body).Decode(&likeResp); err != nil {
+		return 0, err
+	}
+
+	return likeResp.Data.LikeCount, nil
+}
+
+func extractReleaseID(releaseURL string) string {
+	re := regexp.MustCompile(`/main/html/rd/p/([0-9]+)\.([0-9]+)\.html`)
+	matches := re.FindStringSubmatch(releaseURL)
+	if len(matches) == 3 {
+		return fmt.Sprintf("%s.%s", matches[1], matches[2])
+	}
+	return ""
 }
 
 func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
@@ -106,12 +139,20 @@ func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
+				releaseID := extractReleaseID(release.ReleaseURL)
+				likeCount, err := fetchLikeCount(releaseID)
+				if err != nil {
+					log.Println("Error fetching like count for", releaseID, ":", err)
+					likeCount = 0
+				}
+
 				results = append(results, ResponseItem{
 					CorporationName: release.CompanyName,
 					PublishedDate:   parseReleaseDate(release.ReleasedAt),
 					ThumbnailURL:    release.ThumbnailURL,
-					PostURL:         release.ReleaseURL,
+					PostURL:         "https://prtimes.jp" + release.ReleaseURL,
 					Title:           release.Title,
+					LikeCount:       likeCount,
 				})
 				fetchedCount++
 			}
@@ -131,9 +172,36 @@ func handlePRTimesPosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseReleaseDate(dateStr string) string {
-	// Here you can implement a proper date parsing and reformatting logic
-	// Placeholder: returning the current date for simplicity
-	return time.Now().Format("2006年01月02日")
+	// 「〇時間前」の形式を処理
+	reHours := regexp.MustCompile(`(\d+)時間前`)
+	if matches := reHours.FindStringSubmatch(dateStr); len(matches) == 2 {
+		hoursAgo, err := strconv.Atoi(matches[1])
+		if err == nil {
+			parsedTime := time.Now().Add(-time.Duration(hoursAgo) * time.Hour)
+			return parsedTime.Format("2006年01月02日 15:04")
+		}
+	}
+
+	// 「〇分前」の形式を処理
+	reMinutes := regexp.MustCompile(`(\d+)分前`)
+	if matches := reMinutes.FindStringSubmatch(dateStr); len(matches) == 2 {
+		minutesAgo, err := strconv.Atoi(matches[1])
+		if err == nil {
+			parsedTime := time.Now().Add(-time.Duration(minutesAgo) * time.Minute)
+			return parsedTime.Format("2006年01月02日 15:04")
+		}
+	}
+
+	// 絶対時間の形式を処理 (例: 2024年12月3日 09時00分)
+	absoluteFormat := "2006年1月2日 15時04分" // 月や日が1桁の場合も対応
+	parsedTime, err := time.Parse(absoluteFormat, dateStr)
+	if err == nil {
+		return parsedTime.Format("2006年01月02日 15:04")
+	}
+
+	// 処理できない場合は現在時刻を返す
+	log.Println("Unable to parse date:", dateStr)
+	return time.Now().Format("2006年01月02日 15:04")
 }
 
 func main() {
